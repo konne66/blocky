@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Block Blast</title>
+    <style>
+        * { box-sizing: border-box; touch-action: none; }
+        body {
+            background-color: #141821;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        #score-board { font-size: 24px; font-weight: bold; margin-bottom: 15px; }
+        canvas {
+            background-color: #1c2230;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="score-board">Punkte: <span id="score">0</span></div>
+    <canvas id="gameCanvas" width="360" height="520"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
+
+const GRID_SIZE = 8;
+const CELL_SIZE = 40;
+const MARGIN = 4;
+const OFFSET_X = (canvas.width - (GRID_SIZE * (CELL_SIZE + MARGIN))) / 2;
+const OFFSET_Y = 20;
+
+let score = 0;
+let grid = Array(GRID_SIZE).fill(null).map(() => Array(GRID_SIZE).fill(0));
+
+// Verfügbare Block-Formen
+const SHAPES = [
+    [[1]], // 1x1
+    [[1, 1]], // 2x1 Horizontal
+    [[1], [1]], // 1x2 Vertikal
+    [[1, 1, 1]], // 3x1 Horizontal
+    [[1, 1], [1, 1]], // 2x2 Quadrat
+    [[1, 0], [1, 1]], // L-Form
+];
+
+const COLORS = ['#00b4d8', '#e63946', '#2a9d8f', '#e9c46a', '#f4a261'];
+
+// 3 zufällige Blöcke für die Auswahl generieren
+let hand = [];
+function generateHand() {
+    hand = [0, 1, 2].map(() => {
+        const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
+        const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+        return { shape, color, x: 0, y: 0, originalX: 0, originalY: 0 };
+    });
+    
+    // Positionen der 3 Wahlblöcke unter dem Gitter festlegen
+    const slotWidth = canvas.width / 3;
+    hand.forEach((item, index) => {
+        item.originalX = slotWidth * index + slotWidth / 4;
+        item.originalY = 380;
+        item.x = item.originalX;
+        item.y = item.originalY;
+    });
+}
+
+let draggedBlock = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+// Spielfeld & Blöcke zeichnen
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 8x8 Gitter
+    for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+            const x = OFFSET_X + c * (CELL_SIZE + MARGIN);
+            const y = OFFSET_Y + r * (CELL_SIZE + MARGIN);
+            ctx.fillStyle = grid[r][c] ? grid[r][c] : '#262d3d';
+            ctx.beginPath();
+            ctx.roundRect(x, y, CELL_SIZE, CELL_SIZE, 6);
+            ctx.fill();
+        }
+    }
+
+    // Hand-Blöcke unten zeichnen
+    hand.forEach(item => {
+        if (!item) return;
+        ctx.fillStyle = item.color;
+        item.shape.forEach((row, r) => {
+            row.forEach((val, c) => {
+                if (val) {
+                    ctx.beginPath();
+                    ctx.roundRect(item.x + c * 22, item.y + r * 22, 20, 20, 4);
+                    ctx.fill();
+                }
+            });
+        });
+    });
+}
+
+// Event-Handling für Maus & Touch (Pointer Events)
+canvas.addEventListener('pointerdown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    hand.forEach(item => {
+        if (item && mouseX >= item.x - 20 && mouseX <= item.x + 80 &&
+            mouseY >= item.y - 20 && mouseY <= item.y + 80) {
+            draggedBlock = item;
+            dragOffsetX = mouseX - item.x;
+            dragOffsetY = mouseY - item.y;
+        }
+    });
+});
+
+canvas.addEventListener('pointermove', (e) => {
+    if (!draggedBlock) return;
+    const rect = canvas.getBoundingClientRect();
+    draggedBlock.x = e.clientX - rect.left - dragOffsetX;
+    draggedBlock.y = e.clientY - rect.top - dragOffsetY;
+    draw();
+});
+
+canvas.addEventListener('pointerup', () => {
+    if (!draggedBlock) return;
+
+    // Zielzelle im Gitter berechnen
+    const col = Math.round((draggedBlock.x - OFFSET_X) / (CELL_SIZE + MARGIN));
+    const row = Math.round((draggedBlock.y - OFFSET_Y) / (CELL_SIZE + MARGIN));
+
+    if (canPlace(draggedBlock.shape, row, col)) {
+        placeBlock(draggedBlock.shape, row, col, draggedBlock.color);
+        hand[hand.indexOf(draggedBlock)] = null;
+        checkClears();
+
+        if (hand.every(h => h === null)) {
+            generateHand();
+        }
+    } else {
+        // Zurücksetzen, wenn nicht platzierbar
+        draggedBlock.x = draggedBlock.originalX;
+        draggedBlock.y = draggedBlock.originalY;
+    }
+
+    draggedBlock = null;
+    draw();
+});
+
+function canPlace(shape, startRow, startCol) {
+    for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[r].length; c++) {
+            if (shape[r][c]) {
+                const targetRow = startRow + r;
+                const targetCol = startCol + c;
+                if (targetRow < 0 || targetRow >= GRID_SIZE || targetCol < 0 || targetCol >= GRID_SIZE) return false;
+                if (grid[targetRow][targetCol] !== 0) return false;
+            }
+        }
+    }
+    return true;
+}
+
+function placeBlock(shape, startRow, startCol, color) {
+    for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[r].length; c++) {
+            if (shape[r][c]) {
+                grid[startRow + r][startCol + c] = color;
+            }
+        }
+    }
+}
+
+function checkClears() {
+    let rowsToClear = [];
+    let colsToClear = [];
+
+    for (let r = 0; r < GRID_SIZE; r++) {
+        if (grid[r].every(cell => cell !== 0)) rowsToClear.push(r);
+    }
+    for (let c = 0; c < GRID_SIZE; c++) {
+        if (grid.every(row => row[c] !== 0)) colsToClear.push(c);
+    }
+
+    rowsToClear.forEach(r => grid[r].fill(0));
+    colsToClear.forEach(c => grid.forEach(row => row[c] = 0));
+
+    const cleared = rowsToClear.length + colsToClear.length;
+    if (cleared > 0) {
+        score += cleared * 100;
+        scoreEl.innerText = score;
+    }
+}
+
+generateHand();
+draw();
+</script>
+</body>
+</html>
